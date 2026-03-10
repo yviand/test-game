@@ -1,32 +1,26 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 public class EnemyDrop : MonoBehaviour
 {
-    [SerializeField] private GameObject coinPrefab;
-
-    [SerializeField] private float coinDropRate = 0.8f;
-
-    [SerializeField] private int minCoin = 6;
-    [SerializeField] private int maxCoin = 15;
-
-    public void DropLoot()
+    [System.Serializable]
+    public class DropRate
     {
-        if (Random.value > coinDropRate)
+        public GameObject itemPrefab; // Prefab chứa script WorldItem
+        [Range(0, 100)] public float dropChance; // Tỷ lệ rơi (0-100%)
+    }
+
+    public List<DropRate> dropTable;
+
+    public void DropItems()
+    {
+        foreach (var drop in dropTable)
         {
-            return;
-        }
-
-        int coinAmount = Random.Range(minCoin, maxCoin + 1);
-
-        for (int i = 0; i < coinAmount; i++)
-        {
-            Vector2 offset = Random.insideUnitCircle * 0.5f;
-
-            Instantiate(
-                coinPrefab,
-                (Vector2)transform.position + offset,
-                Quaternion.identity
-            );
+            float roll = Random.Range(0f, 100f);
+            if (roll <= drop.dropChance)
+            {
+                Instantiate(drop.itemPrefab, transform.position, Quaternion.identity);
+            }
         }
     }
 }

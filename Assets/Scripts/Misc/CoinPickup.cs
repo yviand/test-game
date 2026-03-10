@@ -35,7 +35,7 @@ public class CoinPickup : MonoBehaviour
             if (distance < 0.2f)
             {
                 playerCoin.AddCoin(amount);
-                Destroy(gameObject);
+                Destroy(this.gameObject);
             }
         }
     }

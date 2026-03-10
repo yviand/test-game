@@ -31,7 +31,7 @@ public class GoblinHealth : MonoBehaviour
 
         if (drop != null)
         {
-            drop.DropLoot();
+            drop.DropItems();
         }
 
         Destroy(gameObject);
