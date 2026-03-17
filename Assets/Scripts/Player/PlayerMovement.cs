@@ -3,17 +3,18 @@ using UnityEngine;
 public class PlayerMovement : MonoBehaviour
 {
     [SerializeField] private float moveSpeed = 5f;
+    [SerializeField] private float flipThreshold = 0.01f;
 
     private Rigidbody2D rb;
     private Vector2 movement;
-    private SpriteRenderer sr;
     private Animator animator;
+    private Vector3 originalLocalScale;
 
     private void Awake()
     {
         rb = GetComponent<Rigidbody2D>();
-        sr = GetComponent<SpriteRenderer>();
         animator = GetComponent<Animator>();
+        originalLocalScale = transform.localScale;
     }
 
     void Update()
@@ -34,10 +35,16 @@ public class PlayerMovement : MonoBehaviour
 
     void HandleFlip()
     {
-        if (movement.x > 0)
-            sr.flipX = false;
-        else if (movement.x < 0)
-            sr.flipX = true;
+        if (Mathf.Abs(movement.x) <= flipThreshold)
+        {
+            return;
+        }
+
+        Vector3 localScale = transform.localScale;
+        localScale.x = movement.x > 0f
+            ? Mathf.Abs(originalLocalScale.x)
+            : -Mathf.Abs(originalLocalScale.x);
+        transform.localScale = localScale;
     }
 
     void UpdateAnimation()

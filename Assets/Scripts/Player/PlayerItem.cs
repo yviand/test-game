@@ -1,30 +1,137 @@
 using UnityEngine;
 
-public class PlayerCoin : MonoBehaviour
+public enum CurrencyType
 {
-    public int currentCoin = 0;
+    Coins,
+    Gems
+}
+
+public class PlayerItem : MonoBehaviour
+{
+    private PlayerInventory playerInventory;
     private InventoryManager inventory;
 
-    void Start()
+    public int Coins => inventory != null ? inventory.Coins : 0;
+    public int Gems => inventory != null ? inventory.Gems : 0;
+
+    private void Awake()
     {
-        inventory = GetComponent<InventoryManager>();
+        playerInventory = GetComponent<PlayerInventory>();
+        ResolveInventoryManager();
     }
 
-    void OnTriggerEnter2D(Collider2D other)
+    public bool CanReceiveItem(ItemInstance itemInstance, int amount = 1)
     {
-        if (other.CompareTag("Collectible"))
+        if (itemInstance == null || itemInstance.Data == null || amount <= 0)
         {
-            WorldItem worldItem = other.GetComponent<WorldItem>();
-            if (inventory.AddItem(worldItem.itemData, worldItem.amount))
-            {
-                Destroy(other.gameObject);
-            }
+            return false;
+        }
+
+        return TryGetInventoryManager(false, out InventoryManager inventoryManager)
+            && inventoryManager.CanAddItem(itemInstance, amount);
+    }
+
+    public bool CanReceiveItem(ItemData itemData, int amount = 1)
+    {
+        if (itemData == null || amount <= 0)
+        {
+            return false;
+        }
+
+        return TryGetInventoryManager(false, out InventoryManager inventoryManager)
+            && inventoryManager.CanAddItem(itemData, amount);
+    }
+
+    public void AddBalance(int amount)
+    {
+        AddBalance(CurrencyType.Coins, amount);
+    }
+
+    public void AddBalance(CurrencyType currencyType, int amount)
+    {
+        if (amount <= 0)
+        {
+            return;
+        }
+
+        if (!TryGetInventoryManager(true, out InventoryManager inventoryManager))
+        {
+            return;
+        }
+
+        switch (currencyType)
+        {
+            case CurrencyType.Coins:
+                inventoryManager.AddBalance(CurrencyType.Coins, amount);
+                break;
+            case CurrencyType.Gems:
+                inventoryManager.AddBalance(CurrencyType.Gems, amount);
+                break;
+            default:
+                Debug.LogWarning($"Unsupported currency type: {currencyType}");
+                break;
         }
     }
 
-    public void AddCoin(int amount)
+    public bool ReceiveItem(ItemInstance itemInstance, int amount = 1)
     {
-        currentCoin += amount;
-        Debug.Log("Current coins: " + currentCoin);
+        if (itemInstance == null || itemInstance.Data == null || amount <= 0)
+        {
+            return false;
+        }
+
+        if (!TryGetInventoryManager(true, out InventoryManager inventoryManager))
+        {
+            return false;
+        }
+
+        return inventoryManager.AddItem(itemInstance, amount);
+    }
+
+    public bool ReceiveItem(ItemData itemData, int amount = 1)
+    {
+        if (itemData == null)
+        {
+            return false;
+        }
+
+        return ReceiveItem(ItemInstance.Create(itemData), amount);
+    }
+
+    private bool TryGetInventoryManager(bool logIfMissing, out InventoryManager inventoryManager)
+    {
+        ResolveInventoryManager();
+
+        inventoryManager = inventory;
+        if (inventoryManager != null)
+        {
+            return true;
+        }
+
+        if (logIfMissing)
+        {
+            Debug.LogWarning("PlayerItem requires a global InventoryManager to receive items.");
+        }
+
+        return false;
+    }
+
+    private void ResolveInventoryManager()
+    {
+        if (playerInventory == null)
+        {
+            playerInventory = GetComponent<PlayerInventory>();
+        }
+
+        if (playerInventory != null)
+        {
+            playerInventory.RefreshBinding();
+            inventory = playerInventory.InventoryManager;
+        }
+
+        if (inventory == null && GameController.Instance != null)
+        {
+            inventory = GameController.Instance.GetInventory();
+        }
     }
 }
