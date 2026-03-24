@@ -394,7 +394,7 @@ Rigidbody2D:
   m_Interpolate: 0
   m_SleepingMode: 1
   m_CollisionDetection: 0
-  m_Constraints: 4
+  m_Constraints: 0
 --- !u!61 &2795767819976976396
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -483,7 +483,7 @@ MonoBehaviour:
     maxAmount: 20
   itemDrops:
   - itemPrefab: {fileID: 6276997795120906153, guid: 2f0cdcebcac917111a5e85d469eb70c9, type: 3}
-    dropChance: 100
+    dropChance: 55
     minAmount: 2
     maxAmount: 8
   - itemPrefab: {fileID: 2320096573363911115, guid: 00d85c97797612989a35f47e021c535f, type: 3}
@@ -503,16 +503,19 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::GoblinController
   attackDamage: 5
+  chaseBuffer: 0.2
   detectionRange: 3
   attackRange: 0.3
   attackRangeBuffer: 0.25
   wanderRange: 3
   moveSpeed: 2
   destinationTolerance: 0.15
+  repathThreshold: 0.25
   attackCooldown: 3
   attackStateDuration: 0.5
   minWanderDelay: 1.5
   maxWanderDelay: 3.5
+  movementSpeedThreshold: 0.1
   cleanupDelay: 2
 --- !u!114 &5004952718013441060
 MonoBehaviour:

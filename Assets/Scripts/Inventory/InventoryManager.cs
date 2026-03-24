@@ -92,14 +92,14 @@ public class InventoryManager : MonoBehaviour
                 if (invItem.instance != null && invItem.instance.Data == itemInstance.Data)
                 {
                     invItem.count += amount;
-                    Debug.Log($"Added {amount} to {itemInstance.Data.itemName}. Total: {invItem.count}");
+                    // Debug.Log($"Added {amount} to {itemInstance.Data.itemName}. Total: {invItem.count}");
                     NotifyInventoryChanged();
                     return true;
                 }
             }
 
             items.Add(new InventoryItem(itemInstance, amount));
-            Debug.Log($"Added new item: {itemInstance.Data.itemName}");
+            // Debug.Log($"Added new item: {itemInstance.Data.itemName}");
             NotifyInventoryChanged();
             return true;
         }
@@ -113,7 +113,7 @@ public class InventoryManager : MonoBehaviour
             items.Add(new InventoryItem(instanceToStore, 1));
         }
 
-        Debug.Log($"Added new item: {itemInstance.Data.itemName}");
+        // Debug.Log($"Added new item: {itemInstance.Data.itemName}");
         NotifyInventoryChanged();
         return true;
     }
@@ -136,7 +136,7 @@ public class InventoryManager : MonoBehaviour
                 Debug.Log($"Gems: {gems}");
                 break;
             default:
-                Debug.LogWarning($"Unsupported currency type: {currencyType}");
+                // Debug.LogWarning($"Unsupported currency type: {currencyType}");
                 return;
         }
 

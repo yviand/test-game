@@ -147,7 +147,7 @@ Rigidbody2D:
   m_Simulated: 1
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
-  m_Mass: 1
+  m_Mass: 10000
   m_LinearDamping: 0
   m_AngularDamping: 0.05
   m_GravityScale: 0
@@ -160,7 +160,7 @@ Rigidbody2D:
     m_Bits: 0
   m_Interpolate: 0
   m_SleepingMode: 1
-  m_CollisionDetection: 0
+  m_CollisionDetection: 1
   m_Constraints: 4
 --- !u!61 &871648633716952417
 BoxCollider2D:
@@ -297,8 +297,8 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 32895ffba2ba7c3249fa5c2c9ad945b9, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::PlayerStats
-  <BaseAttack>k__BackingField: 2
-  <BaseHealth>k__BackingField: 10
+  <BaseAttack>k__BackingField: 20
+  <BaseHealth>k__BackingField: 200
   <BaseCooldown>k__BackingField: 1
   <FinalAttack>k__BackingField: 0
   <FinalMaxHealth>k__BackingField: 0

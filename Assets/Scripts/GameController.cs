@@ -22,7 +22,7 @@ public class GameController : MonoBehaviour
         }
 
         Instance = this;
-        deathScreenController = FindObjectOfType<DeathScreenController>();
+        deathScreenController = FindFirstObjectByType<DeathScreenController>();
         ResolveInventoryManager();
     }
 
@@ -48,7 +48,7 @@ public class GameController : MonoBehaviour
     {
         if (HasPlayerInScene())
         {
-            Debug.LogWarning($"{nameof(GameController)} will not respawn because a player already exists in the scene.", this);
+            // Debug.LogWarning($"{nameof(GameController)} will not respawn because a player already exists in the scene.", this);
             return;
         }
 
@@ -109,7 +109,7 @@ public class GameController : MonoBehaviour
 
     private bool HasPlayerInScene()
     {
-        PlayerStats[] players = FindObjectsOfType<PlayerStats>(true);
+        PlayerStats[] players = FindObjectsByType<PlayerStats>(FindObjectsInactive.Include, FindObjectsSortMode.None);
 
         for (int i = 0; i < players.Length; i++)
         {

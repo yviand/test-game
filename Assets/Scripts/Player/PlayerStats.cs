@@ -58,7 +58,7 @@ public class PlayerStats : MonoBehaviour
         playerMovement = GetComponent<PlayerMovement>();
         playerAttack = GetComponent<PlayerAttack>();
         colliders = GetComponentsInChildren<Collider2D>(true);
-        deathScreenController = FindObjectOfType<DeathScreenController>();
+        deathScreenController = FindFirstObjectByType<DeathScreenController>();
 
         RecalculateAllFinalStats();
         CurrentHealth = FinalMaxHealth;
@@ -274,7 +274,7 @@ public class PlayerStats : MonoBehaviour
     {
         if (deathScreenController == null)
         {
-            deathScreenController = FindObjectOfType<DeathScreenController>();
+            deathScreenController = FindFirstObjectByType<DeathScreenController>();
         }
 
         if (deathScreenController != null)

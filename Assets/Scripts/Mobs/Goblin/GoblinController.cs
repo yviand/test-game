@@ -84,7 +84,8 @@ public class GoblinController : MonoBehaviour
             agent.updateRotation = false;
             agent.updateUpAxis = false;
             agent.speed = moveSpeed;
-            agent.stoppingDistance = attackRange * 0.9f;
+            agent.stoppingDistance = attackRange * 1.1f;
+            agent.obstacleAvoidanceType = ObstacleAvoidanceType.HighQualityObstacleAvoidance;
         }
 
         if (mobStats == null)
@@ -158,7 +159,14 @@ public class GoblinController : MonoBehaviour
         }
 
         bool playerDetected = distanceToPlayer <= detectionRange;
-        bool canAttack = distanceToPlayer <= attackRange && Time.time >= nextAttackTime;
+        
+        // MẸO: Mở rộng tầm kích hoạt đòn đánh một chút xíu khi đang có gia tốc Chasing 
+        // để bù trừ cho độ trễ hãm phanh của NavMeshAgent.
+        float effectiveAttackRange = (currentState == GoblinState.Chasing) 
+            ? attackRange + (attackRangeBuffer * 0.5f) 
+            : attackRange;
+            
+        bool canAttack = distanceToPlayer <= effectiveAttackRange && Time.time >= nextAttackTime;
 
         if (canAttack)
         {
@@ -169,15 +177,11 @@ public class GoblinController : MonoBehaviour
         switch (currentState)
         {
             case GoblinState.Idle:
-                if (playerDetected && distanceToPlayer > attackRange + chaseBuffer)
+                if (playerDetected)
                 {
+                    // Loại bỏ vùng mù chaseBuffer. Đã thấy player và chưa thể attack -> Chase luôn.
                     SetState(GoblinState.Chasing);
                     MoveTo(playerTransform.position);
-                }
-                else if (playerDetected)
-                {
-                    StopMovement();
-                    FaceTarget(playerTransform.position);
                 }
                 else if (Time.time >= nextWanderTime)
                 {
@@ -186,16 +190,10 @@ public class GoblinController : MonoBehaviour
                 break;
 
             case GoblinState.Wandering:
-                if (playerDetected && distanceToPlayer > attackRange + chaseBuffer)
+                if (playerDetected)
                 {
                     SetState(GoblinState.Chasing);
                     MoveTo(playerTransform.position);
-                }
-                else if (playerDetected)
-                {
-                    SetState(GoblinState.Idle);
-                    StopMovement();
-                    FaceTarget(playerTransform.position);
                 }
                 else if (HasReachedDestination())
                 {
@@ -213,10 +211,12 @@ public class GoblinController : MonoBehaviour
                 }
                 else if (distanceToPlayer > attackRange)
                 {
+                    // Tiếp tục áp sát cho tới khi lọt hẳn vào attackRange
                     MoveTo(playerTransform.position);
                 }
                 else
                 {
+                    // Đã vào đủ gần nhưng đang đợi Cooldown đòn đánh
                     StopMovement();
                     FaceTarget(playerTransform.position);
                 }
@@ -313,7 +313,7 @@ public class GoblinController : MonoBehaviour
         }
 
         SetState(GoblinState.Attacking);
-        StopMovement();
+        // StopMovement();
         FaceTarget(playerTransform.position);
 
         nextAttackTime = Time.time + attackCooldown;
@@ -349,7 +349,9 @@ public class GoblinController : MonoBehaviour
 
         if (distanceToPlayer <= detectionRange)
         {
-            if (distanceToPlayer > attackRange + chaseBuffer)
+            // Loại bỏ chaseBuffer ở đây để tránh việc Goblin rơi vào Idle 
+            // ngớ ngẩn khi player vừa lùi ra khỏi tầm đánh một chút xíu.
+            if (distanceToPlayer > attackRange)
             {
                 SetState(GoblinState.Chasing);
                 MoveTo(playerTransform.position);

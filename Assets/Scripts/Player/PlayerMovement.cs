@@ -52,4 +52,4 @@ public class PlayerMovement : MonoBehaviour
         bool isRunning = movement != Vector2.zero;
         animator.SetBool("isRunning", isRunning);
     }
-}
+} 

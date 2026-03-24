@@ -51,17 +51,33 @@ public class PlayerAttack : MonoBehaviour
             enemyLayer
         );
 
-        HashSet<GoblinController> damagedGoblins = new HashSet<GoblinController>();
+        HashSet<MobStats> damagedMobs = new HashSet<MobStats>();
 
         foreach (Collider2D enemy in hits)
         {
             Debug.Log("Hit: " + enemy.name);
 
+            MobStats mobStats = enemy.GetComponentInParent<MobStats>();
+            if (mobStats == null || !damagedMobs.Add(mobStats))
+            {
+                continue;
+            }
+
             GoblinController goblinController = enemy.GetComponentInParent<GoblinController>();
-            if (goblinController != null && damagedGoblins.Add(goblinController))
+            if (goblinController != null)
             {
                 goblinController.TakeDamage(damage);
+                continue;
             }
+
+            BringerController bringerController = enemy.GetComponentInParent<BringerController>();
+            if (bringerController != null)
+            {
+                bringerController.TakeDamage(damage);
+                continue;
+            }
+
+            mobStats.TakeDamage(damage);
         }
     }
 

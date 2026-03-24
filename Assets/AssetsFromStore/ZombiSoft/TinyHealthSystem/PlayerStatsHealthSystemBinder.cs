@@ -72,7 +72,7 @@ public class PlayerStatsHealthSystemBinder : MonoBehaviour
 
         if (playerHealthHUD == null)
         {
-            playerHealthHUD = FindObjectOfType<PlayerHealthHUD>();
+            playerHealthHUD = FindFirstObjectByType<PlayerHealthHUD>();
         }
 
         if (playerHealthHUD == null)

@@ -32,7 +32,7 @@ public class Inventory : MonoBehaviour
             ? existingAmount + amount
             : amount;
 
-        Debug.Log("Picked up " + item.Data.name + " x" + amount);
+        // Debug.Log("Picked up " + item.Data.name + " x" + amount);
     }
 
     public ItemInstance GetItemInSlot(int index)
