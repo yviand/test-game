@@ -235,6 +235,7 @@ public class PlayerStats : MonoBehaviour
     {
         if (playerMovement != null)
         {
+            playerMovement.StopImmediately();
             playerMovement.enabled = false;
         }
 

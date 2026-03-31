@@ -3,6 +3,10 @@ using System.Collections.Generic;
 
 public class PlayerAttack : MonoBehaviour
 {
+    [Header("Input")]
+    [SerializeField] private string attackButton = "Fire1";
+    [SerializeField] private KeyCode attackKey = KeyCode.Mouse0;
+
     private Animator animator;
     private PlayerStats playerStats;
 
@@ -23,10 +27,18 @@ public class PlayerAttack : MonoBehaviour
             return;
         }
 
-        if (Input.GetKeyDown(KeyCode.Space))
+        if (IsAttackPressed())
         {
-            animator.SetTrigger("attack");
+            Debug.Log("ATTACKED");
+            animator.SetTrigger("Attack");
         }
+    }
+
+    private bool IsAttackPressed()
+    {
+        bool attackButtonPressed = !string.IsNullOrWhiteSpace(attackButton) && Input.GetButtonDown(attackButton);
+        bool attackKeyPressed = Input.GetKeyDown(attackKey);
+        return attackButtonPressed || attackKeyPressed;
     }
 
     // gọi bằng Animation Event

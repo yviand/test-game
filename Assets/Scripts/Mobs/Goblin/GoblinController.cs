@@ -1,32 +1,44 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.AI;
 
+[RequireComponent(typeof(Rigidbody2D))]
 public class GoblinController : MonoBehaviour
 {
-    private enum GoblinState { Idle, Wandering, Chasing, Attacking, Dead }
+    private enum GoblinState { Idle, Patrolling, Chasing, Attacking, Dead }
 
     [Header("Combat")]
     [SerializeField] private int attackDamage = 1;
-    [SerializeField] private float chaseBuffer = 0.2f;
+    [SerializeField] private bool initialFacingRight = true;
 
     [Header("Ranges")]
     [SerializeField] private float detectionRange = 5f;
+    [SerializeField] private float detectionHeightTolerance = 1.5f;
     [SerializeField] private float attackRange = 1.2f;
     [SerializeField] private float attackRangeBuffer = 0.25f;
-    [SerializeField] private float wanderRange = 3f;
+    [SerializeField] private float attackHeightTolerance = 1f;
     [SerializeField] private float moveSpeed = 2f;
-    [SerializeField] private float destinationTolerance = 0.15f;
-    [SerializeField] private float repathThreshold = 0.25f;
 
     [Header("Attack Timing")]
     [SerializeField] private float attackCooldown = 3f;
     [SerializeField] private float attackStateDuration = 0.8f;
 
-    [Header("Wander Timing")]
-    [SerializeField] private float minWanderDelay = 1.5f;
-    [SerializeField] private float maxWanderDelay = 3.5f;
+    [Header("Patrol Timing")]
+    [SerializeField] private float minPatrolDelay = 1.5f;
+    [SerializeField] private float maxPatrolDelay = 3.5f;
+
+    [Header("Environment Detection")]
+    [SerializeField] private LayerMask environmentLayer = 1;
+    [SerializeField] private Transform wallCheckPoint;
+    [SerializeField] private Vector2 wallCheckOffset = new(0.28f, 0.02f);
+    [SerializeField] private float wallCheckDistance = 0.18f;
+    [SerializeField] private Transform ledgeCheckPoint;
+    [SerializeField] private Vector2 ledgeCheckOffset = new(0.22f, -0.1f);
+    [SerializeField] private float ledgeCheckDistance = 0.75f;
+    [SerializeField] private float ledgeForwardWeight = 0.25f;
+    [SerializeField] private float environmentCheckInterval = 0.08f;
+    [SerializeField] private bool allowCliffDrop = false;
+    [SerializeField] private float groundNormalThreshold = 0.7f;
 
     [Header("Animation")]
     [SerializeField] private float movementSpeedThreshold = 0.1f;
@@ -34,29 +46,30 @@ public class GoblinController : MonoBehaviour
     [Header("Death")]
     [SerializeField] private float cleanupDelay = 2f;
 
+    private readonly HashSet<int> groundedColliderIds = new();
+    private readonly ContactPoint2D[] contactBuffer = new ContactPoint2D[8];
+    private readonly List<ColliderLayerState> colliderLayerStates = new();
+
     private Animator animator;
-    private NavMeshAgent agent;
+    private Rigidbody2D rb;
     private SpriteRenderer spriteRenderer;
     private EnemyDrop enemyDrop;
     private MobStats mobStats;
     private Transform playerTransform;
     private PlayerStats playerStats;
     private Collider2D[] hitColliders;
-    private readonly List<ColliderLayerState> colliderLayerStates = new();
-    private Vector3 spawnPoint;
-    private Vector3 currentDestination;
-    private Vector3 lastRequestedDestination;
-    private Vector3 lastFramePosition;
-    private Vector3 movementVelocity;
     private Coroutine cleanupCoroutine;
 
     private GoblinState currentState = GoblinState.Idle;
     private float nextAttackTime;
     private float attackStateEndTime;
-    private float nextWanderTime;
+    private float nextPatrolTime;
+    private float nextEnvironmentCheckTime;
+    private float horizontalIntent;
+    private int facingDirection;
+    private bool cachedWallAhead;
+    private bool cachedGroundAhead = true;
     private bool isDead;
-    private bool hasDestination;
-    private float repathThresholdSqr;
 
     private struct ColliderLayerState
     {
@@ -64,43 +77,27 @@ public class GoblinController : MonoBehaviour
         public int Layer;
     }
 
+    public bool IsGrounded => groundedColliderIds.Count > 0;
+
     private void Awake()
     {
         animator = GetComponent<Animator>();
-        agent = GetComponent<NavMeshAgent>();
+        rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         enemyDrop = GetComponent<EnemyDrop>();
         mobStats = GetComponent<MobStats>();
         hitColliders = GetComponentsInChildren<Collider2D>(true);
-        spawnPoint = transform.position;
-        currentDestination = transform.position;
-        lastRequestedDestination = transform.position;
-        lastFramePosition = transform.position;
-        repathThresholdSqr = repathThreshold * repathThreshold;
-        CacheColliderLayerStates();
 
-        if (agent != null)
-        {
-            agent.updateRotation = false;
-            agent.updateUpAxis = false;
-            agent.speed = moveSpeed;
-            agent.stoppingDistance = attackRange * 1.1f;
-            agent.obstacleAvoidanceType = ObstacleAvoidanceType.HighQualityObstacleAvoidance;
-        }
+        CacheColliderLayerStates();
+        SetFacingDirection(initialFacingRight ? 1 : -1, true);
 
         if (mobStats == null)
         {
             Debug.LogError($"{nameof(GoblinController)} on {name} requires a {nameof(MobStats)} component.", this);
         }
 
-        GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
-        if (playerObject != null)
-        {
-            playerTransform = playerObject.transform;
-            playerStats = playerObject.GetComponent<PlayerStats>();
-        }
-
-        ScheduleNextWander();
+        RefreshPlayerTargetReference();
+        ScheduleNextPatrol();
     }
 
     private void OnEnable()
@@ -121,84 +118,90 @@ public class GoblinController : MonoBehaviour
 
     private void Update()
     {
-        switch (currentState)
+        if (currentState == GoblinState.Dead)
         {
-            case GoblinState.Dead:
-                UpdateAnimations();
-                return;
-
-            case GoblinState.Attacking:
-                UpdateAttackingState();
-                UpdateAnimations();
-                return;
-
-            case GoblinState.Idle:
-            case GoblinState.Wandering:
-            case GoblinState.Chasing:
-                if (isDead)
-                {
-                    currentState = GoblinState.Dead;
-                    UpdateAnimations();
-                    return;
-                }
-
-                ValidateAliveCollisionState();
-                HandleLogic();
-                UpdateMovementVelocity();
-                UpdateAnimations();
-                return;
+            UpdateAnimations();
+            return;
         }
+
+        ValidateAliveCollisionState();
+        RefreshPlayerTargetReference();
+        RefreshEnvironmentCacheIfNeeded();
+
+        if (currentState == GoblinState.Attacking)
+        {
+            UpdateAttackingState();
+        }
+        else
+        {
+            HandleStateLogic();
+        }
+
+        UpdateAnimations();
     }
 
-    private void HandleLogic()
+    private void FixedUpdate()
     {
-        if (!TryGetDistanceToPlayer(out float distanceToPlayer))
+        if (rb == null)
         {
-            HandleNoPlayerTarget();
             return;
         }
 
-        bool playerDetected = distanceToPlayer <= detectionRange;
-        
-        // MẸO: Mở rộng tầm kích hoạt đòn đánh một chút xíu khi đang có gia tốc Chasing 
-        // để bù trừ cho độ trễ hãm phanh của NavMeshAgent.
-        float effectiveAttackRange = (currentState == GoblinState.Chasing) 
-            ? attackRange + (attackRangeBuffer * 0.5f) 
-            : attackRange;
-            
-        bool canAttack = distanceToPlayer <= effectiveAttackRange && Time.time >= nextAttackTime;
+        Vector2 velocity = rb.linearVelocity;
 
-        if (canAttack)
+        if (currentState == GoblinState.Dead || currentState == GoblinState.Idle || currentState == GoblinState.Attacking)
         {
-            StartAttack();
+            velocity.x = 0f;
+        }
+        else
+        {
+            velocity.x = horizontalIntent * moveSpeed;
+        }
+
+        rb.linearVelocity = velocity;
+    }
+
+    private void HandleStateLogic()
+    {
+        horizontalIntent = 0f;
+        bool hasPlayerDelta = TryGetPlayerDelta(out Vector2 playerDelta);
+        bool playerDetected = hasPlayerDelta && CanDetectPlayer(playerDelta);
+        bool playerInAttackRange = hasPlayerDelta && CanAttackPlayer(playerDelta);
+
+        if (playerInAttackRange && Time.time >= nextAttackTime)
+        {
+            StartAttack(playerDelta);
             return;
         }
 
         switch (currentState)
         {
             case GoblinState.Idle:
+                if (hasPlayerDelta && Mathf.Abs(playerDelta.x) > 0.01f)
+                {
+                    SetFacingDirection(playerDelta.x >= 0f ? 1 : -1);
+                }
+
                 if (playerDetected)
                 {
-                    // Loại bỏ vùng mù chaseBuffer. Đã thấy player và chưa thể attack -> Chase luôn.
                     SetState(GoblinState.Chasing);
-                    MoveTo(playerTransform.position);
                 }
-                else if (Time.time >= nextWanderTime)
+                else if (Time.time >= nextPatrolTime)
                 {
-                    BeginWander();
+                    SetState(GoblinState.Patrolling);
                 }
                 break;
 
-            case GoblinState.Wandering:
+            case GoblinState.Patrolling:
                 if (playerDetected)
                 {
                     SetState(GoblinState.Chasing);
-                    MoveTo(playerTransform.position);
+                    break;
                 }
-                else if (HasReachedDestination())
+
+                if (!TryMoveInDirection(facingDirection))
                 {
-                    SetState(GoblinState.Idle);
-                    ScheduleNextWander();
+                    FlipDirection();
                 }
                 break;
 
@@ -206,48 +209,19 @@ public class GoblinController : MonoBehaviour
                 if (!playerDetected)
                 {
                     SetState(GoblinState.Idle);
-                    StopMovement();
-                    ScheduleNextWander();
+                    ScheduleNextPatrol();
+                    break;
                 }
-                else if (distanceToPlayer > attackRange)
-                {
-                    // Tiếp tục áp sát cho tới khi lọt hẳn vào attackRange
-                    MoveTo(playerTransform.position);
-                }
-                else
-                {
-                    // Đã vào đủ gần nhưng đang đợi Cooldown đòn đánh
-                    StopMovement();
-                    FaceTarget(playerTransform.position);
-                }
-                break;
-        }
-    }
 
-    private void HandleNoPlayerTarget()
-    {
-        switch (currentState)
-        {
-            case GoblinState.Chasing:
-            case GoblinState.Attacking:
-                SetState(GoblinState.Idle);
-                StopMovement();
-                ScheduleNextWander();
-                break;
-
-            case GoblinState.Wandering:
-                if (HasReachedDestination())
+                if (Mathf.Abs(playerDelta.x) > 0.01f)
                 {
-                    SetState(GoblinState.Idle);
-                    ScheduleNextWander();
+                    int targetDirection = playerDelta.x > 0f ? 1 : -1;
+                    SetFacingDirection(targetDirection);
                 }
-                break;
 
-            case GoblinState.Idle:
-                StopMovement();
-                if (Time.time >= nextWanderTime)
+                if (!playerInAttackRange)
                 {
-                    BeginWander();
+                    TryMoveInDirection(facingDirection);
                 }
                 break;
         }
@@ -255,11 +229,11 @@ public class GoblinController : MonoBehaviour
 
     private void UpdateAttackingState()
     {
-        StopMovement();
+        horizontalIntent = 0f;
 
-        if (HasLivingPlayerTarget())
+        if (TryGetPlayerDelta(out Vector2 playerDelta) && Mathf.Abs(playerDelta.x) > 0.01f)
         {
-            FaceTarget(playerTransform.position);
+            SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
         }
 
         if (Time.time >= attackStateEndTime)
@@ -268,44 +242,71 @@ public class GoblinController : MonoBehaviour
         }
     }
 
-    private void MoveTo(Vector3 target)
+    private bool TryMoveInDirection(int direction)
     {
-        target.z = transform.position.z;
-        bool shouldRepath = !hasDestination || (target - lastRequestedDestination).sqrMagnitude >= repathThresholdSqr;
-
-        currentDestination = target;
-        hasDestination = true;
-
-        if (HasUsableAgent())
+        if (!CanMoveInDirection(direction))
         {
-            if (currentState != GoblinState.Attacking)
-            {
-                agent.isStopped = false;
-                if (shouldRepath)
-                {
-                    agent.SetDestination(target);
-                    lastRequestedDestination = target;
-                }
-                else if (agent.remainingDistance <= agent.stoppingDistance + destinationTolerance)
-                {
-                    agent.SetDestination(target);
-                    lastRequestedDestination = target;
-                }
-            }
+            horizontalIntent = 0f;
+            return false;
         }
 
-        FaceTarget(target);
+        horizontalIntent = direction;
+        return true;
     }
 
-    private void BeginWander()
+    private bool CanMoveInDirection(int direction)
     {
-        Vector2 offset = Random.insideUnitCircle * wanderRange;
-        Vector3 target = spawnPoint + new Vector3(offset.x, offset.y, 0f);
-        SetState(GoblinState.Wandering);
-        MoveTo(target);
+        bool wallAhead = direction == facingDirection ? cachedWallAhead : CheckWall(direction);
+        bool groundAhead = direction == facingDirection ? cachedGroundAhead : CheckGroundAhead(direction);
+        return !wallAhead && (allowCliffDrop || groundAhead);
     }
 
-    private void StartAttack()
+    private void RefreshEnvironmentCacheIfNeeded()
+    {
+        if (Time.time < nextEnvironmentCheckTime)
+        {
+            return;
+        }
+
+        nextEnvironmentCheckTime = Time.time + environmentCheckInterval;
+
+        if (!IsGrounded || currentState == GoblinState.Idle || currentState == GoblinState.Attacking || currentState == GoblinState.Dead)
+        {
+            cachedWallAhead = false;
+            cachedGroundAhead = true;
+            return;
+        }
+
+        cachedWallAhead = CheckWall(facingDirection);
+        cachedGroundAhead = CheckGroundAhead(facingDirection);
+    }
+
+    private bool CheckWall(int direction)
+    {
+        Vector2 origin = GetSensorOrigin(wallCheckPoint, wallCheckOffset, direction);
+        RaycastHit2D hit = Physics2D.Raycast(origin, Vector2.right * direction, wallCheckDistance, environmentLayer);
+        return hit.collider != null;
+    }
+
+    private bool CheckGroundAhead(int direction)
+    {
+        Vector2 origin = GetSensorOrigin(ledgeCheckPoint, ledgeCheckOffset, direction);
+        Vector2 rayDirection = new Vector2(direction * ledgeForwardWeight, -1f).normalized;
+        RaycastHit2D hit = Physics2D.Raycast(origin, rayDirection, ledgeCheckDistance, environmentLayer);
+        return hit.collider != null;
+    }
+
+    private Vector2 GetSensorOrigin(Transform point, Vector2 fallbackOffset, int direction)
+    {
+        if (point != null)
+        {
+            return point.position;
+        }
+
+        return (Vector2)transform.position + new Vector2(Mathf.Abs(fallbackOffset.x) * direction, fallbackOffset.y);
+    }
+
+    private void StartAttack(Vector2 playerDelta)
     {
         if (isDead || !HasLivingPlayerTarget())
         {
@@ -313,8 +314,12 @@ public class GoblinController : MonoBehaviour
         }
 
         SetState(GoblinState.Attacking);
-        // StopMovement();
-        FaceTarget(playerTransform.position);
+        horizontalIntent = 0f;
+
+        if (Mathf.Abs(playerDelta.x) > 0.01f)
+        {
+            SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
+        }
 
         nextAttackTime = Time.time + attackCooldown;
         attackStateEndTime = Time.time + attackStateDuration;
@@ -334,40 +339,20 @@ public class GoblinController : MonoBehaviour
             return;
         }
 
-        if (!TryGetDistanceToPlayer(out float distanceToPlayer))
+        if (!TryGetPlayerDelta(out Vector2 playerDelta) || !CanDetectPlayer(playerDelta))
         {
             SetState(GoblinState.Idle);
-            ScheduleNextWander();
+            ScheduleNextPatrol();
             return;
         }
 
-        if (distanceToPlayer <= attackRange && Time.time >= nextAttackTime)
+        if (CanAttackPlayer(playerDelta) && Time.time >= nextAttackTime)
         {
-            StartAttack();
+            StartAttack(playerDelta);
             return;
         }
 
-        if (distanceToPlayer <= detectionRange)
-        {
-            // Loại bỏ chaseBuffer ở đây để tránh việc Goblin rơi vào Idle 
-            // ngớ ngẩn khi player vừa lùi ra khỏi tầm đánh một chút xíu.
-            if (distanceToPlayer > attackRange)
-            {
-                SetState(GoblinState.Chasing);
-                MoveTo(playerTransform.position);
-            }
-            else
-            {
-                SetState(GoblinState.Idle);
-                StopMovement();
-                FaceTarget(playerTransform.position);
-            }
-
-            return;
-        }
-
-        SetState(GoblinState.Idle);
-        ScheduleNextWander();
+        SetState(GoblinState.Chasing);
     }
 
     public void TakeDamage(int damage)
@@ -385,43 +370,39 @@ public class GoblinController : MonoBehaviour
             return;
         }
 
-        if (currentState == GoblinState.Attacking)
-        {
-            return;
-        }
+        horizontalIntent = 0f;
 
-        StopMovement();
-
-        if (animator != null)
+        if (animator != null && currentState != GoblinState.Attacking)
         {
             animator.ResetTrigger("Attack");
             animator.SetTrigger("Hurt");
         }
 
-        if (TryGetDistanceToPlayer(out float distanceToPlayer) && distanceToPlayer <= detectionRange)
+        if (TryGetPlayerDelta(out Vector2 playerDelta) && CanDetectPlayer(playerDelta))
         {
             SetState(GoblinState.Chasing);
-            MoveTo(playerTransform.position);
+            if (Mathf.Abs(playerDelta.x) > 0.01f)
+            {
+                SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
+            }
+
             return;
         }
 
         SetState(GoblinState.Idle);
-        ScheduleNextWander();
+        ScheduleNextPatrol();
     }
 
     public void ExecuteAttackDamage()
     {
-        if (isDead || !HasLivingPlayerTarget())
+        if (isDead || !TryGetPlayerDelta(out Vector2 playerDelta) || !CanAttackPlayer(playerDelta))
         {
             return;
         }
 
-        float distanceToPlayer = Vector2.Distance(transform.position, playerTransform.position);
-        Vector2 facingDirection = spriteRenderer != null && spriteRenderer.flipX ? Vector2.left : Vector2.right;
-        Vector2 directionToPlayer = (playerTransform.position - transform.position).normalized;
-        float dotProduct = Vector2.Dot(facingDirection, directionToPlayer);
-
-        if (distanceToPlayer <= attackRange + attackRangeBuffer && dotProduct > 0f)
+        Vector2 directionToPlayer = playerDelta.normalized;
+        float dotProduct = Vector2.Dot(Vector2.right * facingDirection, directionToPlayer);
+        if (dotProduct > 0f)
         {
             playerStats.TakeDamage(attackDamage);
         }
@@ -436,11 +417,13 @@ public class GoblinController : MonoBehaviour
 
         isDead = true;
         currentState = GoblinState.Dead;
-        StopMovement();
+        horizontalIntent = 0f;
+        groundedColliderIds.Clear();
 
-        if (agent != null)
+        if (rb != null)
         {
-            agent.enabled = false;
+            rb.linearVelocity = Vector2.zero;
+            rb.bodyType = RigidbodyType2D.Kinematic;
         }
 
         foreach (Collider2D col in hitColliders)
@@ -459,10 +442,7 @@ public class GoblinController : MonoBehaviour
             animator.SetBool("isDead", true);
         }
 
-        if (enemyDrop != null)
-        {
-            enemyDrop.Drop();
-        }
+        enemyDrop?.Drop();
 
         if (cleanupCoroutine == null)
         {
@@ -489,27 +469,13 @@ public class GoblinController : MonoBehaviour
             return;
         }
 
-        float speed = 0f;
-        if (HasUsableAgent() && !agent.isStopped && agent.velocity.sqrMagnitude > movementSpeedThreshold)
+        float speed = rb != null ? Mathf.Abs(rb.linearVelocity.x) : 0f;
+        if (speed <= movementSpeedThreshold)
         {
-            speed = agent.velocity.magnitude;
-        }
-        else if (!HasUsableAgent() && movementVelocity.sqrMagnitude > movementSpeedThreshold)
-        {
-            speed = movementVelocity.magnitude;
+            speed = 0f;
         }
 
         animator.SetFloat("Speed", speed);
-    }
-
-    private void FaceTarget(Vector3 target)
-    {
-        if (spriteRenderer == null)
-        {
-            return;
-        }
-
-        spriteRenderer.flipX = target.x < transform.position.x;
     }
 
     private void SetState(GoblinState newState)
@@ -523,43 +489,88 @@ public class GoblinController : MonoBehaviour
 
         if (newState == GoblinState.Idle || newState == GoblinState.Attacking || newState == GoblinState.Dead)
         {
-            StopMovement();
+            horizontalIntent = 0f;
         }
     }
 
-    private void ScheduleNextWander()
+    private void ScheduleNextPatrol()
     {
-        nextWanderTime = Time.time + Random.Range(minWanderDelay, maxWanderDelay);
+        nextPatrolTime = Time.time + Random.Range(minPatrolDelay, maxPatrolDelay);
     }
 
-    private void StopMovement()
+    private void FlipDirection()
     {
-        hasDestination = false;
-        movementVelocity = Vector3.zero;
-        currentDestination = transform.position;
-        lastRequestedDestination = transform.position;
+        SetFacingDirection(-facingDirection);
+    }
 
-        if (HasUsableAgent())
+    private void SetFacingDirection(int direction, bool force = false)
+    {
+        if (direction == 0)
         {
-            agent.isStopped = true;
-            agent.ResetPath();
-            agent.velocity = Vector3.zero;
+            return;
+        }
+
+        if (!force && facingDirection == direction)
+        {
+            return;
+        }
+
+        facingDirection = direction;
+        nextEnvironmentCheckTime = 0f;
+
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.flipX = (direction > 0) != initialFacingRight;
         }
     }
 
-    private bool HasReachedDestination()
+    private bool CanDetectPlayer(Vector2 playerDelta)
     {
-        if (!hasDestination)
+        return Mathf.Abs(playerDelta.x) <= detectionRange && Mathf.Abs(playerDelta.y) <= detectionHeightTolerance;
+    }
+
+    private bool CanAttackPlayer(Vector2 playerDelta)
+    {
+        return Mathf.Abs(playerDelta.x) <= attackRange + attackRangeBuffer && Mathf.Abs(playerDelta.y) <= attackHeightTolerance;
+    }
+
+    private bool HasLivingPlayerTarget()
+    {
+        RefreshPlayerTargetReference();
+        return playerTransform != null && playerStats != null && !playerStats.IsDead;
+    }
+
+    private bool TryGetPlayerDelta(out Vector2 playerDelta)
+    {
+        if (!HasLivingPlayerTarget())
         {
-            return true;
+            playerDelta = Vector2.zero;
+            return false;
         }
 
-        if (HasUsableAgent())
+        playerDelta = playerTransform.position - transform.position;
+        return true;
+    }
+
+    private void RefreshPlayerTargetReference()
+    {
+        if (playerStats != null && playerTransform != null && !playerStats.IsDead)
         {
-            return !agent.pathPending && agent.remainingDistance <= Mathf.Max(agent.stoppingDistance, destinationTolerance);
+            return;
         }
 
-        return Vector2.Distance(transform.position, currentDestination) <= destinationTolerance;
+        playerStats = PlayerStats.Instance;
+        playerTransform = playerStats != null ? playerStats.transform : null;
+
+        if (playerTransform == null)
+        {
+            GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
+            if (playerObject != null)
+            {
+                playerTransform = playerObject.transform;
+                playerStats = playerObject.GetComponent<PlayerStats>();
+            }
+        }
     }
 
     private void CacheColliderLayerStates()
@@ -579,40 +590,6 @@ public class GoblinController : MonoBehaviour
                 Layer = col.gameObject.layer
             });
         }
-    }
-
-    private bool HasUsableAgent()
-    {
-        return agent != null && agent.enabled && agent.isOnNavMesh;
-    }
-
-    private bool HasLivingPlayerTarget()
-    {
-        RefreshPlayerTargetReference();
-        return playerTransform != null && playerStats != null && !playerStats.IsDead;
-    }
-
-    private bool TryGetDistanceToPlayer(out float distanceToPlayer)
-    {
-        if (!HasLivingPlayerTarget())
-        {
-            distanceToPlayer = float.MaxValue;
-            return false;
-        }
-
-        distanceToPlayer = Vector2.Distance(transform.position, playerTransform.position);
-        return true;
-    }
-
-    private void RefreshPlayerTargetReference()
-    {
-        if (playerStats != null && playerTransform != null && !playerStats.IsDead)
-        {
-            return;
-        }
-
-        playerStats = PlayerStats.Instance;
-        playerTransform = playerStats != null ? playerStats.transform : null;
     }
 
     private void ValidateAliveCollisionState()
@@ -641,59 +618,69 @@ public class GoblinController : MonoBehaviour
         }
     }
 
-    private void UpdateMovementVelocity()
+    private void OnCollisionEnter2D(Collision2D collision)
     {
-        if (currentState == GoblinState.Idle || currentState == GoblinState.Attacking || currentState == GoblinState.Dead)
+        RefreshGroundState(collision);
+    }
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        RefreshGroundState(collision);
+    }
+
+    private void OnCollisionExit2D(Collision2D collision)
+    {
+        groundedColliderIds.Remove(collision.collider.GetInstanceID());
+    }
+
+    private void RefreshGroundState(Collision2D collision)
+    {
+        int colliderId = collision.collider.GetInstanceID();
+        int contactCount = collision.GetContacts(contactBuffer);
+        bool hasWalkableContact = false;
+
+        for (int i = 0; i < contactCount; i++)
         {
-            movementVelocity = Vector3.zero;
-            lastFramePosition = transform.position;
-            return;
-        }
-
-        if (HasUsableAgent())
-        {
-            movementVelocity = agent.velocity;
-            lastFramePosition = transform.position;
-            return;
-        }
-
-        if (hasDestination)
-        {
-            Vector3 nextPosition = Vector3.MoveTowards(
-                transform.position,
-                currentDestination,
-                moveSpeed * Time.deltaTime
-            );
-
-            FaceTarget(currentDestination);
-            transform.position = nextPosition;
-
-            if (HasReachedDestination())
+            if (contactBuffer[i].normal.y > groundNormalThreshold)
             {
-                hasDestination = false;
+                hasWalkableContact = true;
+                break;
             }
         }
 
-        movementVelocity = (transform.position - lastFramePosition) / Mathf.Max(Time.deltaTime, 0.0001f);
-        lastFramePosition = transform.position;
+        if (hasWalkableContact)
+        {
+            groundedColliderIds.Add(colliderId);
+        }
+        else
+        {
+            groundedColliderIds.Remove(colliderId);
+        }
     }
 
     private void OnDrawGizmosSelected()
     {
-        Gizmos.color = Color.red;
-        Gizmos.DrawWireSphere(transform.position, attackRange);
-
-        Gizmos.color = Color.yellow;
-        Gizmos.DrawWireSphere(transform.position, attackRange + attackRangeBuffer);
+        int drawDirection = facingDirection == 0 ? (initialFacingRight ? 1 : -1) : facingDirection;
 
         Gizmos.color = Color.blue;
         Gizmos.DrawWireSphere(transform.position, detectionRange);
 
-        if (hasDestination)
-        {
-            Gizmos.color = Color.green;
-            Gizmos.DrawLine(transform.position, currentDestination);
-            Gizmos.DrawCube(currentDestination, Vector3.one * 0.2f);
-        }
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position, attackRange);
+
+        // if (attackPoint != null)
+        // {
+        //     Gizmos.color = Color.magenta;
+        //     Gizmos.DrawWireSphere(attackPoint.position, attackHitboxRadius);
+        // }
+
+        Gizmos.color = Color.yellow;
+        Vector2 wallOrigin = GetSensorOrigin(wallCheckPoint, wallCheckOffset, drawDirection);
+        Gizmos.DrawLine(wallOrigin, wallOrigin + (Vector2.right * drawDirection * wallCheckDistance));
+
+        Gizmos.color = Color.green;
+        Vector2 ledgeOrigin = GetSensorOrigin(ledgeCheckPoint, ledgeCheckOffset, drawDirection);
+        Vector2 ledgeDirection = new Vector2(drawDirection * ledgeForwardWeight, -1f).normalized * ledgeCheckDistance;
+        Gizmos.DrawLine(ledgeOrigin, ledgeOrigin + ledgeDirection);
     }
 }

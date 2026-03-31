@@ -8,8 +8,9 @@ public class ItemDrop : BaseDrop
     public ItemData ItemData => itemData;
     public int Amount => amount;
 
-    private void Awake()
+    protected override void Awake()
     {
+        base.Awake();
         ResolveItemData();
         ConfigurePickupState();
     }
@@ -61,6 +62,7 @@ public class ItemDrop : BaseDrop
 
     protected override void LaunchOnSpawn()
     {
+        base.LaunchOnSpawn();
     }
 
     private void ResolveItemData()
@@ -99,7 +101,6 @@ public class ItemDrop : BaseDrop
 
         rigidbody2D.linearVelocity = Vector2.zero;
         rigidbody2D.angularVelocity = 0f;
-        rigidbody2D.simulated = false;
     }
 
     private ItemInstance CreateItemInstance()

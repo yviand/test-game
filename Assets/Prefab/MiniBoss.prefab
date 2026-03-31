@@ -409,14 +409,14 @@ Rigidbody2D:
   m_PrefabInstance: {fileID: 0}
   m_PrefabAsset: {fileID: 0}
   m_GameObject: {fileID: 5780091651431089255}
-  m_BodyType: 1
+  m_BodyType: 0
   m_Simulated: 1
   m_UseFullKinematicContacts: 0
   m_UseAutoMass: 0
   m_Mass: 1
   m_LinearDamping: 0
   m_AngularDamping: 0.05
-  m_GravityScale: 0
+  m_GravityScale: 4
   m_Material: {fileID: 0}
   m_IncludeLayers:
     serializedVersion: 2
@@ -424,10 +424,10 @@ Rigidbody2D:
   m_ExcludeLayers:
     serializedVersion: 2
     m_Bits: 0
-  m_Interpolate: 0
+  m_Interpolate: 1
   m_SleepingMode: 1
-  m_CollisionDetection: 0
-  m_Constraints: 0
+  m_CollisionDetection: 1
+  m_Constraints: 4
 --- !u!61 &2795767819976976396
 BoxCollider2D:
   m_ObjectHideFlags: 0
@@ -438,7 +438,7 @@ BoxCollider2D:
   m_Enabled: 1
   serializedVersion: 3
   m_Density: 1
-  m_Material: {fileID: 0}
+  m_Material: {fileID: 6200000, guid: 7ef22da7bb0dbf542abb9fc54b781b11, type: 2}
   m_IncludeLayers:
     serializedVersion: 2
     m_Bits: 0
@@ -565,7 +565,6 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::BringerController
   attackDamage: 15
-  chaseBuffer: 0.2
   attackPoint: {fileID: 6084704690962652383}
   attackHitboxRadius: 1
   playerLayer:
@@ -573,16 +572,28 @@ MonoBehaviour:
     m_Bits: 8
   initialFacingRight: 0
   detectionRange: 7
+  detectionHeightTolerance: 2.5
   attackRange: 1
   attackRangeBuffer: 0.5
-  wanderRange: 3
+  attackHeightTolerance: 1.5
   moveSpeed: 3
-  destinationTolerance: 0.15
-  repathThreshold: 0.25
   attackCooldown: 2.5
   attackStateDuration: 1.2
-  minWanderDelay: 2
-  maxWanderDelay: 4
+  minPatrolDelay: 2
+  maxPatrolDelay: 4
+  environmentLayer:
+    serializedVersion: 2
+    m_Bits: 1
+  wallCheckPoint: {fileID: 0}
+  wallCheckOffset: {x: 0.6, y: 0.1}
+  wallCheckDistance: 0.25
+  ledgeCheckPoint: {fileID: 0}
+  ledgeCheckOffset: {x: 0.55, y: -0.15}
+  ledgeCheckDistance: 0.95
+  ledgeForwardWeight: 0.25
+  environmentCheckInterval: 0.08
+  allowCliffDrop: 0
+  groundNormalThreshold: 0.7
   movementSpeedThreshold: 0.1
   cleanupDelay: 3
 --- !u!1 &5916707167279227825

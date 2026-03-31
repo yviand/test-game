@@ -5,6 +5,8 @@ TagManager:
   serializedVersion: 3
   tags:
   - Enemy
+  - ManaSprite
+  - HealthSprite
   layers:
   - Default
   - TransparentFX
@@ -13,9 +15,9 @@ TagManager:
   - Water
   - UI
   - Enemy
-  - 
-  - 
-  - 
+  - Border
+  - Wall
+  - Props
   - 
   - 
   - 
@@ -42,17 +44,23 @@ TagManager:
   - name: Default
     uniqueID: 0
     locked: 0
-  - name: Background
+  - name: Border
     uniqueID: 2822572189
     locked: 0
-  - name: Ground
+  - name: Wall
     uniqueID: 605122085
+    locked: 0
+  - name: Props
+    uniqueID: 678008163
     locked: 0
   - name: Player
     uniqueID: 918162175
     locked: 0
   - name: Foreground
     uniqueID: 1334218997
+    locked: 0
+  - name: UI
+    uniqueID: 628256463
     locked: 0
   m_RenderingLayers:
   - Default

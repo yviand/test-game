@@ -1,39 +1,49 @@
 using System.Collections;
 using System.Collections.Generic;
 using UnityEngine;
-using UnityEngine.AI;
 
+[RequireComponent(typeof(Rigidbody2D))]
 public class BringerController : MonoBehaviour
 {
-    private enum BossState { Idle, Wandering, Chasing, Attacking, Dead }
+    private enum BossState { Idle, Patrolling, Chasing, Attacking, Dead }
 
     [Header("Combat & Hitbox")]
     [SerializeField] private int attackDamage = 15;
-    [SerializeField] private float chaseBuffer = 0.2f;
-    [SerializeField] private Transform attackPoint; // Gắn 1 object con (Empty) vào đây
+    [SerializeField] private Transform attackPoint;
     [SerializeField] private float attackHitboxRadius = 1.5f;
-    [SerializeField] private LayerMask playerLayer; // Đặt layer của Player
+    [SerializeField] private LayerMask playerLayer;
 
     [Header("Visual Orientation")]
-    [Tooltip("Tick nếu frame gốc của Boss đang quay mặt sang phải, bỏ tick nếu quay sang trái")]
-    [SerializeField] private bool initialFacingRight = false; 
+    [SerializeField] private bool initialFacingRight = false;
 
     [Header("Ranges")]
     [SerializeField] private float detectionRange = 7f;
+    [SerializeField] private float detectionHeightTolerance = 2.5f;
     [SerializeField] private float attackRange = 2f;
     [SerializeField] private float attackRangeBuffer = 0.5f;
-    [SerializeField] private float wanderRange = 3f;
+    [SerializeField] private float attackHeightTolerance = 1.5f;
     [SerializeField] private float moveSpeed = 3f;
-    [SerializeField] private float destinationTolerance = 0.15f;
-    [SerializeField] private float repathThreshold = 0.25f;
 
     [Header("Attack Timing")]
     [SerializeField] private float attackCooldown = 2.5f;
     [SerializeField] private float attackStateDuration = 1.2f;
 
-    [Header("Wander Timing")]
-    [SerializeField] private float minWanderDelay = 2f;
-    [SerializeField] private float maxWanderDelay = 4f;
+    [Header("Patrol Timing")]
+    [SerializeField] private float minPatrolDelay = 2f;
+    [SerializeField] private float maxPatrolDelay = 4f;
+
+    [Header("Environment Detection")]
+    [SerializeField] private LayerMask environmentLayer = 1;
+    [SerializeField] private Transform wallCheckPoint;
+    [SerializeField] private Vector2 wallCheckOffset = new(0.6f, 0.1f);
+    [SerializeField] private float wallCheckDistance = 0.25f;
+    [SerializeField] private Transform ledgeCheckPoint;
+    [SerializeField] private Vector2 ledgeCheckOffset = new(0.55f, -0.15f);
+    [SerializeField] private float ledgeCheckDistance = 0.95f;
+    [SerializeField] private float ledgeForwardWeight = 0.25f;
+    [SerializeField] private float environmentCheckInterval = 0.08f;
+    [SerializeField] private bool allowCliffDrop = false;
+    [SerializeField] private float groundNormalThreshold = 0.7f;
 
     [Header("Animation")]
     [SerializeField] private float movementSpeedThreshold = 0.1f;
@@ -41,31 +51,32 @@ public class BringerController : MonoBehaviour
     [Header("Death")]
     [SerializeField] private float cleanupDelay = 3f;
 
+    private readonly HashSet<int> groundedColliderIds = new();
+    private readonly ContactPoint2D[] contactBuffer = new ContactPoint2D[8];
+    private readonly List<ColliderLayerState> colliderLayerStates = new();
+
     private Animator animator;
-    private NavMeshAgent agent;
+    private Rigidbody2D rb;
     private SpriteRenderer spriteRenderer;
     private EnemyDrop enemyDrop;
     private MobStats mobStats;
     private Transform playerTransform;
     private PlayerStats playerStats;
     private Collider2D[] hitColliders;
-    private readonly List<ColliderLayerState> colliderLayerStates = new();
-    
-    private Vector3 spawnPoint;
-    private Vector3 currentDestination;
-    private Vector3 lastRequestedDestination;
-    private Vector3 lastFramePosition;
-    private Vector3 movementVelocity;
     private Coroutine cleanupCoroutine;
+    private Vector3 originalAttackPointLocalPosition;
 
     private BossState currentState = BossState.Idle;
     private float nextAttackTime;
     private float attackStateEndTime;
-    private float nextWanderTime;
-    private bool isDead;
-    private bool hasDestination;
+    private float nextPatrolTime;
+    private float nextEnvironmentCheckTime;
+    private float horizontalIntent;
+    private int facingDirection;
+    private bool cachedWallAhead;
+    private bool cachedGroundAhead = true;
     private bool hasAppliedDamageThisAttack;
-    private float repathThresholdSqr;
+    private bool isDead;
 
     private struct ColliderLayerState
     {
@@ -73,134 +84,136 @@ public class BringerController : MonoBehaviour
         public int Layer;
     }
 
+    public bool IsGrounded => groundedColliderIds.Count > 0;
+
     private void Awake()
     {
         animator = GetComponent<Animator>();
-        agent = GetComponent<NavMeshAgent>();
+        rb = GetComponent<Rigidbody2D>();
         spriteRenderer = GetComponent<SpriteRenderer>();
         enemyDrop = GetComponent<EnemyDrop>();
         mobStats = GetComponent<MobStats>();
         hitColliders = GetComponentsInChildren<Collider2D>(true);
-        spawnPoint = transform.position;
-        currentDestination = transform.position;
-        lastRequestedDestination = transform.position;
-        lastFramePosition = transform.position;
-        repathThresholdSqr = repathThreshold * repathThreshold;
-        
-        CacheColliderLayerStates();
 
-        if (agent != null)
+        if (attackPoint != null)
         {
-            agent.updateRotation = false;
-            agent.updateUpAxis = false;
-            agent.speed = moveSpeed;
-            // Boss to nên dừng đúng mốc attackRange để tránh húc đẩy Player
-            agent.stoppingDistance = attackRange * 1.1f; 
-            agent.obstacleAvoidanceType = ObstacleAvoidanceType.HighQualityObstacleAvoidance;
+            originalAttackPointLocalPosition = attackPoint.localPosition;
         }
+
+        CacheColliderLayerStates();
+        SetFacingDirection(initialFacingRight ? 1 : -1, true);
 
         if (mobStats == null)
         {
             Debug.LogError($"{nameof(BringerController)} on {name} requires a {nameof(MobStats)} component.", this);
         }
 
-        GameObject playerObject = GameObject.FindGameObjectWithTag("Player");
-        if (playerObject != null)
-        {
-            playerTransform = playerObject.transform;
-            playerStats = playerObject.GetComponent<PlayerStats>();
-        }
-
-        ScheduleNextWander();
+        RefreshPlayerTargetReference();
+        ScheduleNextPatrol();
     }
 
     private void OnEnable()
     {
-        if (mobStats != null) mobStats.OnDied += HandleMobDied;
+        if (mobStats != null)
+        {
+            mobStats.OnDied += HandleMobDied;
+        }
     }
 
     private void OnDisable()
     {
-        if (mobStats != null) mobStats.OnDied -= HandleMobDied;
+        if (mobStats != null)
+        {
+            mobStats.OnDied -= HandleMobDied;
+        }
     }
 
     private void Update()
     {
-        switch (currentState)
+        if (currentState == BossState.Dead)
         {
-            case BossState.Dead:
-                UpdateAnimations();
-                return;
-
-            case BossState.Attacking:
-                UpdateAttackingState();
-                UpdateAnimations();
-                return;
-
-            case BossState.Idle:
-            case BossState.Wandering:
-            case BossState.Chasing:
-                if (isDead)
-                {
-                    currentState = BossState.Dead;
-                    UpdateAnimations();
-                    return;
-                }
-
-                ValidateAliveCollisionState();
-                HandleLogic();
-                UpdateMovementVelocity();
-                UpdateAnimations();
-                return;
+            UpdateAnimations();
+            return;
         }
+
+        ValidateAliveCollisionState();
+        RefreshPlayerTargetReference();
+        RefreshEnvironmentCacheIfNeeded();
+
+        if (currentState == BossState.Attacking)
+        {
+            UpdateAttackingState();
+        }
+        else
+        {
+            HandleStateLogic();
+        }
+
+        UpdateAnimations();
     }
 
-    private void HandleLogic()
+    private void FixedUpdate()
     {
-        if (!TryGetDistanceToPlayer(out float distanceToPlayer))
+        if (rb == null)
         {
-            HandleNoPlayerTarget();
             return;
         }
 
-        bool playerDetected = distanceToPlayer <= detectionRange;
-        
-        float effectiveAttackRange = (currentState == BossState.Chasing) 
-            ? attackRange + (attackRangeBuffer * 0.5f) 
-            : attackRange;
-            
-        bool canAttack = distanceToPlayer <= effectiveAttackRange && Time.time >= nextAttackTime;
+        Vector2 velocity = rb.linearVelocity;
 
-        if (canAttack)
+        if (currentState == BossState.Dead || currentState == BossState.Idle || currentState == BossState.Attacking)
         {
-            StartAttack();
+            velocity.x = 0f;
+        }
+        else
+        {
+            velocity.x = horizontalIntent * moveSpeed;
+        }
+
+        rb.linearVelocity = velocity;
+    }
+
+    private void HandleStateLogic()
+    {
+        horizontalIntent = 0f;
+        bool hasPlayerDelta = TryGetPlayerDelta(out Vector2 playerDelta);
+        bool playerDetected = hasPlayerDelta && CanDetectPlayer(playerDelta);
+        bool playerInAttackRange = hasPlayerDelta && CanAttackPlayer(playerDelta);
+
+        if (playerInAttackRange && Time.time >= nextAttackTime)
+        {
+            StartAttack(playerDelta);
             return;
         }
 
         switch (currentState)
         {
             case BossState.Idle:
+                if (hasPlayerDelta && Mathf.Abs(playerDelta.x) > 0.01f)
+                {
+                    SetFacingDirection(playerDelta.x >= 0f ? 1 : -1);
+                }
+
                 if (playerDetected)
                 {
                     SetState(BossState.Chasing);
-                    MoveTo(playerTransform.position);
                 }
-                else if (Time.time >= nextWanderTime)
+                else if (Time.time >= nextPatrolTime)
                 {
-                    BeginWander();
+                    SetState(BossState.Patrolling);
                 }
                 break;
 
-            case BossState.Wandering:
+            case BossState.Patrolling:
                 if (playerDetected)
                 {
                     SetState(BossState.Chasing);
-                    MoveTo(playerTransform.position);
+                    break;
                 }
-                else if (HasReachedDestination())
+
+                if (!TryMoveInDirection(facingDirection))
                 {
-                    SetState(BossState.Idle);
-                    ScheduleNextWander();
+                    FlipDirection();
                 }
                 break;
 
@@ -208,55 +221,31 @@ public class BringerController : MonoBehaviour
                 if (!playerDetected)
                 {
                     SetState(BossState.Idle);
-                    StopMovement();
-                    ScheduleNextWander();
+                    ScheduleNextPatrol();
+                    break;
                 }
-                else if (distanceToPlayer > attackRange)
-                {
-                    MoveTo(playerTransform.position);
-                }
-                else
-                {
-                    StopMovement();
-                    FaceTarget(playerTransform.position);
-                }
-                break;
-        }
-    }
 
-    private void HandleNoPlayerTarget()
-    {
-        switch (currentState)
-        {
-            case BossState.Chasing:
-            case BossState.Attacking:
-                SetState(BossState.Idle);
-                StopMovement();
-                ScheduleNextWander();
-                break;
-
-            case BossState.Wandering:
-                if (HasReachedDestination())
+                if (Mathf.Abs(playerDelta.x) > 0.01f)
                 {
-                    SetState(BossState.Idle);
-                    ScheduleNextWander();
+                    int targetDirection = playerDelta.x > 0f ? 1 : -1;
+                    SetFacingDirection(targetDirection);
                 }
-                break;
 
-            case BossState.Idle:
-                StopMovement();
-                if (Time.time >= nextWanderTime) BeginWander();
+                if (!playerInAttackRange)
+                {
+                    TryMoveInDirection(facingDirection);
+                }
                 break;
         }
     }
 
     private void UpdateAttackingState()
     {
-        StopMovement();
+        horizontalIntent = 0f;
 
-        if (HasLivingPlayerTarget())
+        if (TryGetPlayerDelta(out Vector2 playerDelta) && Mathf.Abs(playerDelta.x) > 0.01f)
         {
-            FaceTarget(playerTransform.position);
+            SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
         }
 
         if (Time.time >= attackStateEndTime)
@@ -265,43 +254,85 @@ public class BringerController : MonoBehaviour
         }
     }
 
-    private void MoveTo(Vector3 target)
+    private bool TryMoveInDirection(int direction)
     {
-        target.z = transform.position.z;
-        bool shouldRepath = !hasDestination || (target - lastRequestedDestination).sqrMagnitude >= repathThresholdSqr;
-
-        currentDestination = target;
-        hasDestination = true;
-
-        if (HasUsableAgent() && currentState != BossState.Attacking)
+        if (!CanMoveInDirection(direction))
         {
-            agent.isStopped = false;
-            if (shouldRepath || agent.remainingDistance <= agent.stoppingDistance + destinationTolerance)
-            {
-                agent.SetDestination(target);
-                lastRequestedDestination = target;
-            }
+            horizontalIntent = 0f;
+            return false;
         }
 
-        FaceTarget(target);
+        horizontalIntent = direction;
+        return true;
     }
 
-    private void BeginWander()
+    private bool CanMoveInDirection(int direction)
     {
-        Vector2 offset = Random.insideUnitCircle * wanderRange;
-        Vector3 target = spawnPoint + new Vector3(offset.x, offset.y, 0f);
-        SetState(BossState.Wandering);
-        MoveTo(target);
+        bool wallAhead = direction == facingDirection ? cachedWallAhead : CheckWall(direction);
+        bool groundAhead = direction == facingDirection ? cachedGroundAhead : CheckGroundAhead(direction);
+        return !wallAhead && (allowCliffDrop || groundAhead);
     }
 
-    private void StartAttack()
+    private void RefreshEnvironmentCacheIfNeeded()
     {
-        if (isDead || !HasLivingPlayerTarget()) return;
+        if (Time.time < nextEnvironmentCheckTime)
+        {
+            return;
+        }
+
+        nextEnvironmentCheckTime = Time.time + environmentCheckInterval;
+
+        if (!IsGrounded || currentState == BossState.Idle || currentState == BossState.Attacking || currentState == BossState.Dead)
+        {
+            cachedWallAhead = false;
+            cachedGroundAhead = true;
+            return;
+        }
+
+        cachedWallAhead = CheckWall(facingDirection);
+        cachedGroundAhead = CheckGroundAhead(facingDirection);
+    }
+
+    private bool CheckWall(int direction)
+    {
+        Vector2 origin = GetSensorOrigin(wallCheckPoint, wallCheckOffset, direction);
+        RaycastHit2D hit = Physics2D.Raycast(origin, Vector2.right * direction, wallCheckDistance, environmentLayer);
+        return hit.collider != null;
+    }
+
+    private bool CheckGroundAhead(int direction)
+    {
+        Vector2 origin = GetSensorOrigin(ledgeCheckPoint, ledgeCheckOffset, direction);
+        Vector2 rayDirection = new Vector2(direction * ledgeForwardWeight, -1f).normalized;
+        RaycastHit2D hit = Physics2D.Raycast(origin, rayDirection, ledgeCheckDistance, environmentLayer);
+        return hit.collider != null;
+    }
+
+    private Vector2 GetSensorOrigin(Transform point, Vector2 fallbackOffset, int direction)
+    {
+        if (point != null)
+        {
+            return point.position;
+        }
+
+        return (Vector2)transform.position + new Vector2(Mathf.Abs(fallbackOffset.x) * direction, fallbackOffset.y);
+    }
+
+    private void StartAttack(Vector2 playerDelta)
+    {
+        if (isDead || !HasLivingPlayerTarget())
+        {
+            return;
+        }
 
         SetState(BossState.Attacking);
-        StopMovement();
-        FaceTarget(playerTransform.position);
+        horizontalIntent = 0f;
         hasAppliedDamageThisAttack = false;
+
+        if (Mathf.Abs(playerDelta.x) > 0.01f)
+        {
+            SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
+        }
 
         nextAttackTime = Time.time + attackCooldown;
         attackStateEndTime = Time.time + attackStateDuration;
@@ -316,45 +347,43 @@ public class BringerController : MonoBehaviour
 
     public void FinishAttack()
     {
-        if (isDead) return;
+        if (isDead)
+        {
+            return;
+        }
 
-        if (!TryGetDistanceToPlayer(out float distanceToPlayer))
+        if (!TryGetPlayerDelta(out Vector2 playerDelta) || !CanDetectPlayer(playerDelta))
         {
             SetState(BossState.Idle);
-            ScheduleNextWander();
+            ScheduleNextPatrol();
             return;
         }
 
-        if (distanceToPlayer <= detectionRange)
+        if (CanAttackPlayer(playerDelta) && Time.time >= nextAttackTime)
         {
-            if (distanceToPlayer > attackRange)
-            {
-                SetState(BossState.Chasing);
-                MoveTo(playerTransform.position);
-            }
-            else
-            {
-                SetState(BossState.Idle);
-                StopMovement();
-                FaceTarget(playerTransform.position);
-            }
+            StartAttack(playerDelta);
             return;
         }
 
-        SetState(BossState.Idle);
-        ScheduleNextWander();
+        SetState(BossState.Chasing);
     }
 
     public void TakeDamage(int damage)
     {
-        if (isDead || damage <= 0 || mobStats == null) return;
+        if (isDead || damage <= 0 || mobStats == null)
+        {
+            return;
+        }
 
         ValidateAliveCollisionState();
         mobStats.TakeDamage(damage);
 
-        if (isDead || mobStats.IsDead || currentState == BossState.Attacking) return;
+        if (isDead || mobStats.IsDead || currentState == BossState.Attacking)
+        {
+            return;
+        }
 
-        StopMovement();
+        horizontalIntent = 0f;
 
         if (animator != null)
         {
@@ -362,31 +391,36 @@ public class BringerController : MonoBehaviour
             animator.SetTrigger("Hurt");
         }
 
-        if (TryGetDistanceToPlayer(out float distanceToPlayer) && distanceToPlayer <= detectionRange)
+        if (TryGetPlayerDelta(out Vector2 playerDelta) && CanDetectPlayer(playerDelta))
         {
             SetState(BossState.Chasing);
-            MoveTo(playerTransform.position);
+            if (Mathf.Abs(playerDelta.x) > 0.01f)
+            {
+                SetFacingDirection(playerDelta.x > 0f ? 1 : -1);
+            }
+
             return;
         }
 
         SetState(BossState.Idle);
-        ScheduleNextWander();
+        ScheduleNextPatrol();
     }
 
-    // ==== HITBOX LOGIC MỚI ====
-    // Gọi hàm này bằng Animation Event tại đúng frame vung vũ khí trúng mục tiêu
     public void ExecuteAttackDamage()
     {
-        if (isDead || currentState != BossState.Attacking || attackPoint == null || hasAppliedDamageThisAttack) return;
+        if (isDead || currentState != BossState.Attacking || attackPoint == null || hasAppliedDamageThisAttack)
+        {
+            return;
+        }
 
         Collider2D[] hits = Physics2D.OverlapCircleAll(attackPoint.position, attackHitboxRadius, playerLayer);
-        
+
         for (int i = 0; i < hits.Length; i++)
         {
-            PlayerStats pStats = hits[i].GetComponentInParent<PlayerStats>();
-            if (pStats != null)
+            PlayerStats targetPlayerStats = hits[i].GetComponentInParent<PlayerStats>();
+            if (targetPlayerStats != null)
             {
-                pStats.TakeDamage(attackDamage);
+                targetPlayerStats.TakeDamage(attackDamage);
                 hasAppliedDamageThisAttack = true;
                 break;
             }
@@ -395,17 +429,28 @@ public class BringerController : MonoBehaviour
 
     private void HandleMobDied()
     {
-        if (isDead) return;
+        if (isDead)
+        {
+            return;
+        }
 
         isDead = true;
         currentState = BossState.Dead;
-        StopMovement();
+        horizontalIntent = 0f;
+        groundedColliderIds.Clear();
 
-        if (agent != null) agent.enabled = false;
+        if (rb != null)
+        {
+            rb.linearVelocity = Vector2.zero;
+            rb.bodyType = RigidbodyType2D.Kinematic;
+        }
 
         foreach (Collider2D col in hitColliders)
         {
-            if (col != null) col.enabled = false;
+            if (col != null)
+            {
+                col.enabled = false;
+            }
         }
 
         if (animator != null)
@@ -416,8 +461,12 @@ public class BringerController : MonoBehaviour
             animator.SetBool("isDead", true);
         }
 
-        if (enemyDrop != null) enemyDrop.Drop();
-        if (cleanupCoroutine == null) cleanupCoroutine = StartCoroutine(CleanupRoutine());
+        enemyDrop?.Drop();
+
+        if (cleanupCoroutine == null)
+        {
+            cleanupCoroutine = StartCoroutine(CleanupRoutine());
+        }
     }
 
     private IEnumerator CleanupRoutine()
@@ -428,7 +477,10 @@ public class BringerController : MonoBehaviour
 
     private void UpdateAnimations()
     {
-        if (animator == null) return;
+        if (animator == null)
+        {
+            return;
+        }
 
         if (currentState == BossState.Idle || currentState == BossState.Attacking || currentState == BossState.Dead)
         {
@@ -436,94 +488,77 @@ public class BringerController : MonoBehaviour
             return;
         }
 
-        float speed = 0f;
-        if (HasUsableAgent() && !agent.isStopped && agent.velocity.sqrMagnitude > movementSpeedThreshold)
+        float speed = rb != null ? Mathf.Abs(rb.linearVelocity.x) : 0f;
+        if (speed <= movementSpeedThreshold)
         {
-            speed = agent.velocity.magnitude;
-        }
-        else if (!HasUsableAgent() && movementVelocity.sqrMagnitude > movementSpeedThreshold)
-        {
-            speed = movementVelocity.magnitude;
+            speed = 0f;
         }
 
         animator.SetFloat("Speed", speed);
     }
 
-    // ==== FLIP LOGIC MỚI ====
-    private void FaceTarget(Vector3 target)
-    {
-        if (spriteRenderer == null) return;
-
-        bool targetIsLeft = target.x < transform.position.x;
-
-        // Đảo ngược logic phụ thuộc vào việc Boss ban đầu vẽ quay mặt đi đâu
-        if (initialFacingRight)
-        {
-            spriteRenderer.flipX = targetIsLeft;
-            
-            // Xoay Hitbox theo hướng mặt (Local Position của Hitbox)
-            if (attackPoint != null) 
-                attackPoint.localPosition = new Vector3(targetIsLeft ? -Mathf.Abs(attackPoint.localPosition.x) : Mathf.Abs(attackPoint.localPosition.x), attackPoint.localPosition.y, 0f);
-        }
-        else
-        {
-            spriteRenderer.flipX = !targetIsLeft;
-            
-            // Xoay Hitbox theo hướng mặt
-            if (attackPoint != null) 
-                attackPoint.localPosition = new Vector3(targetIsLeft ? -Mathf.Abs(attackPoint.localPosition.x) : Mathf.Abs(attackPoint.localPosition.x), attackPoint.localPosition.y, 0f);
-        }
-    }
-
     private void SetState(BossState newState)
     {
-        if (currentState == newState) return;
+        if (currentState == newState)
+        {
+            return;
+        }
 
         currentState = newState;
+
         if (newState == BossState.Idle || newState == BossState.Attacking || newState == BossState.Dead)
         {
-            StopMovement();
+            horizontalIntent = 0f;
         }
     }
 
-    private void ScheduleNextWander()
+    private void ScheduleNextPatrol()
     {
-        nextWanderTime = Time.time + Random.Range(minWanderDelay, maxWanderDelay);
+        nextPatrolTime = Time.time + Random.Range(minPatrolDelay, maxPatrolDelay);
     }
 
-    private void StopMovement()
+    private void FlipDirection()
     {
-        hasDestination = false;
-        movementVelocity = Vector3.zero;
-        currentDestination = transform.position;
-        lastRequestedDestination = transform.position;
+        SetFacingDirection(-facingDirection);
+    }
 
-        if (HasUsableAgent())
+    private void SetFacingDirection(int direction, bool force = false)
+    {
+        if (direction == 0)
         {
-            agent.isStopped = true;
-            agent.ResetPath();
-            agent.velocity = Vector3.zero;
+            return;
         }
-    }
 
-    private bool HasReachedDestination()
-    {
-        if (!hasDestination) return true;
-        if (HasUsableAgent()) return !agent.pathPending && agent.remainingDistance <= Mathf.Max(agent.stoppingDistance, destinationTolerance);
-        return Vector2.Distance(transform.position, currentDestination) <= destinationTolerance;
-    }
-
-    private void CacheColliderLayerStates()
-    {
-        colliderLayerStates.Clear();
-        foreach (Collider2D col in hitColliders)
+        if (!force && facingDirection == direction)
         {
-            if (col == null) continue;
-            colliderLayerStates.Add(new ColliderLayerState { Collider = col, Layer = col.gameObject.layer });
+            return;
+        }
+
+        facingDirection = direction;
+        nextEnvironmentCheckTime = 0f;
+
+        if (spriteRenderer != null)
+        {
+            spriteRenderer.flipX = (direction > 0) != initialFacingRight;
+        }
+
+        if (attackPoint != null)
+        {
+            Vector3 localPosition = originalAttackPointLocalPosition;
+            localPosition.x = Mathf.Abs(originalAttackPointLocalPosition.x) * direction;
+            attackPoint.localPosition = localPosition;
         }
     }
 
-    private bool HasUsableAgent() => agent != null && agent.enabled && agent.isOnNavMesh;
+    private bool CanDetectPlayer(Vector2 playerDelta)
+    {
+        return Mathf.Abs(playerDelta.x) <= detectionRange && Mathf.Abs(playerDelta.y) <= detectionHeightTolerance;
+    }
+
+    private bool CanAttackPlayer(Vector2 playerDelta)
+    {
+        return Mathf.Abs(playerDelta.x) <= attackRange + attackRangeBuffer && Mathf.Abs(playerDelta.y) <= attackHeightTolerance;
+    }
 
     private bool HasLivingPlayerTarget()
     {
@@ -531,15 +566,15 @@ public class BringerController : MonoBehaviour
         return playerTransform != null && playerStats != null && !playerStats.IsDead;
     }
 
-    private bool TryGetDistanceToPlayer(out float distanceToPlayer)
+    private bool TryGetPlayerDelta(out Vector2 playerDelta)
     {
         if (!HasLivingPlayerTarget())
         {
-            distanceToPlayer = float.MaxValue;
+            playerDelta = Vector2.zero;
             return false;
         }
 
-        distanceToPlayer = Vector2.Distance(transform.position, playerTransform.position);
+        playerDelta = playerTransform.position - transform.position;
         return true;
     }
 
@@ -564,58 +599,114 @@ public class BringerController : MonoBehaviour
         }
     }
 
-    private void ValidateAliveCollisionState()
+    private void CacheColliderLayerStates()
     {
-        if (isDead) return;
-        foreach (ColliderLayerState state in colliderLayerStates)
+        colliderLayerStates.Clear();
+
+        foreach (Collider2D col in hitColliders)
         {
-            if (state.Collider == null) continue;
-            if (!state.Collider.enabled) state.Collider.enabled = true;
-            if (state.Collider.gameObject.layer != state.Layer) state.Collider.gameObject.layer = state.Layer;
+            if (col == null)
+            {
+                continue;
+            }
+
+            colliderLayerStates.Add(new ColliderLayerState
+            {
+                Collider = col,
+                Layer = col.gameObject.layer
+            });
         }
     }
 
-    private void UpdateMovementVelocity()
+    private void ValidateAliveCollisionState()
     {
-        if (currentState == BossState.Idle || currentState == BossState.Attacking || currentState == BossState.Dead)
+        if (isDead)
         {
-            movementVelocity = Vector3.zero;
-            lastFramePosition = transform.position;
             return;
         }
 
-        if (HasUsableAgent())
+        foreach (ColliderLayerState state in colliderLayerStates)
         {
-            movementVelocity = agent.velocity;
-            lastFramePosition = transform.position;
-            return;
+            if (state.Collider == null)
+            {
+                continue;
+            }
+
+            if (!state.Collider.enabled)
+            {
+                state.Collider.enabled = true;
+            }
+
+            if (state.Collider.gameObject.layer != state.Layer)
+            {
+                state.Collider.gameObject.layer = state.Layer;
+            }
+        }
+    }
+
+    private void OnCollisionEnter2D(Collision2D collision)
+    {
+        RefreshGroundState(collision);
+    }
+
+    private void OnCollisionStay2D(Collision2D collision)
+    {
+        RefreshGroundState(collision);
+    }
+
+    private void OnCollisionExit2D(Collision2D collision)
+    {
+        groundedColliderIds.Remove(collision.collider.GetInstanceID());
+    }
+
+    private void RefreshGroundState(Collision2D collision)
+    {
+        int colliderId = collision.collider.GetInstanceID();
+        int contactCount = collision.GetContacts(contactBuffer);
+        bool hasWalkableContact = false;
+
+        for (int i = 0; i < contactCount; i++)
+        {
+            if (contactBuffer[i].normal.y > groundNormalThreshold)
+            {
+                hasWalkableContact = true;
+                break;
+            }
         }
 
-        if (hasDestination)
+        if (hasWalkableContact)
         {
-            Vector3 nextPosition = Vector3.MoveTowards(transform.position, currentDestination, moveSpeed * Time.deltaTime);
-            FaceTarget(currentDestination);
-            transform.position = nextPosition;
-
-            if (HasReachedDestination()) hasDestination = false;
+            groundedColliderIds.Add(colliderId);
         }
-
-        movementVelocity = (transform.position - lastFramePosition) / Mathf.Max(Time.deltaTime, 0.0001f);
-        lastFramePosition = transform.position;
+        else
+        {
+            groundedColliderIds.Remove(colliderId);
+        }
     }
 
     private void OnDrawGizmosSelected()
     {
+        int drawDirection = facingDirection == 0 ? (initialFacingRight ? 1 : -1) : facingDirection;
+
         Gizmos.color = Color.blue;
         Gizmos.DrawWireSphere(transform.position, detectionRange);
 
-        // Hiển thị phạm vi Hitbox mới
+        Gizmos.color = Color.red;
+        Gizmos.DrawWireSphere(transform.position, attackRange);
+
         if (attackPoint != null)
         {
-            Gizmos.color = Color.red;
+            Gizmos.color = Color.magenta;
             Gizmos.DrawWireSphere(attackPoint.position, attackHitboxRadius);
-            Gizmos.DrawLine(transform.position, attackPoint.position);
-            Gizmos.DrawSphere(attackPoint.position, 0.08f);
         }
+
+        Gizmos.color = Color.yellow;
+        Vector2 wallOrigin = GetSensorOrigin(wallCheckPoint, wallCheckOffset, drawDirection);
+        Gizmos.DrawLine(wallOrigin, wallOrigin + (Vector2.right * drawDirection * wallCheckDistance));
+
+        Gizmos.color = Color.green;
+        Vector2 ledgeOrigin = GetSensorOrigin(ledgeCheckPoint, ledgeCheckOffset, drawDirection);
+        Vector2 ledgeDirection = new Vector2(drawDirection * ledgeForwardWeight, -1f).normalized * ledgeCheckDistance;
+        Gizmos.DrawLine(ledgeOrigin, ledgeOrigin + ledgeDirection);
     }
 }

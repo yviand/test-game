@@ -4,6 +4,7 @@ using System.Collections.Generic;
 public class EnemyDrop : MonoBehaviour
 {
     [SerializeField] private float scatterRadius = 0.5f;
+    [SerializeField] private float spawnHeightOffset = 0.1f;
     
     [System.Serializable]
     public class DropRate
@@ -97,7 +98,7 @@ public class EnemyDrop : MonoBehaviour
 
     private Vector3 GetRandomScatterPosition()
     {
-        Vector2 randomOffset = Random.insideUnitCircle * scatterRadius;
-        return transform.position + new Vector3(randomOffset.x, randomOffset.y, 0);
+        float horizontalOffset = Random.Range(-scatterRadius, scatterRadius);
+        return transform.position + new Vector3(horizontalOffset, spawnHeightOffset, 0f);
     }
 }
