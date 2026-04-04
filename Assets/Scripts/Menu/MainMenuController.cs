@@ -4,7 +4,8 @@ using UnityEngine.SceneManagement; // Bắt buộc phải có để chuyển c�
 public class MainMenuController : MonoBehaviour
 {
     [Header("Scene Names")]
-    [SerializeField] private string gameplaySceneName = "Gameplay"; // Tên Scene chính của bạn
+    [SerializeField]
+    private string gameplaySceneName = "Gameplay"; // Tên Scene chính của bạn
 
     public void StartGame()
     {
@@ -18,11 +19,11 @@ public class MainMenuController : MonoBehaviour
         Debug.Log("Exiting Game...");
 
         // Nếu đang chạy trong Unity Editor
-        #if UNITY_EDITOR
-            UnityEditor.EditorApplication.isPlaying = false;
-        #else
-            // Nếu đã build ra file .exe
-            Application.Quit();
-        #endif
+#if UNITY_EDITOR
+        UnityEditor.EditorApplication.isPlaying = false;
+#else
+        // Nếu đã build ra file .exe
+        Application.Quit();
+#endif
     }
 }

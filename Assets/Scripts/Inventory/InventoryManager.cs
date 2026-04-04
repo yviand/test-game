@@ -17,6 +17,9 @@ public class InventoryManager : MonoBehaviour
         }
     }
 
+    // Singleton Instance
+    public static InventoryManager Instance { get; private set; }
+
     [SerializeField] private List<InventoryItem> items = new List<InventoryItem>();
     [SerializeField] private int maxSlots = 20;
     [SerializeField] private int coins;
@@ -29,9 +32,37 @@ public class InventoryManager : MonoBehaviour
 
     public event Action<InventoryManager> InventoryChanged;
 
+    private void Awake()
+    {
+        // Implement Singleton pattern with persistence
+        if (Instance == null)
+        {
+            Instance = this;
+            DontDestroyOnLoad(gameObject);
+        }
+        else if (Instance != this)
+        {
+            // Destroy duplicate InventoryManager instances
+            Destroy(gameObject);
+        }
+    }
+
     private void Start()
     {
-        NotifyInventoryChanged();
+        // Only notify if this is the active instance
+        if (Instance == this)
+        {
+            NotifyInventoryChanged();
+        }
+    }
+
+    private void OnDestroy()
+    {
+        // Clean up singleton reference if this was the instance
+        if (Instance == this)
+        {
+            Instance = null;
+        }
     }
 
     public bool IsFull()

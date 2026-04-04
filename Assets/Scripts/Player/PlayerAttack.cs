@@ -29,7 +29,6 @@ public class PlayerAttack : MonoBehaviour
 
         if (IsAttackPressed())
         {
-            Debug.Log("ATTACKED");
             animator.SetTrigger("Attack");
         }
     }

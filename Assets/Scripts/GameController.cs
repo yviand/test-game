@@ -9,9 +9,11 @@ public class GameController : MonoBehaviour
     [SerializeField] private Transform spawnPoint;
 
     [Header("Systems")]
-    [SerializeField] private InventoryManager inventoryManager;
+    [SerializeField] private IntroManager introManager;
 
     private DeathScreenController deathScreenController;
+
+    [HideInInspector] public static string lastExitName;
 
     private void Awake()
     {
@@ -23,16 +25,29 @@ public class GameController : MonoBehaviour
 
         Instance = this;
         deathScreenController = FindFirstObjectByType<DeathScreenController>();
-        ResolveInventoryManager();
+        ResolveIntroManager();
     }
 
     private void Start()
     {
+        if (ShouldDelayInitialSpawnForIntro())
+        {
+            introManager.IntroCompleted -= HandleIntroCompleted;
+            introManager.IntroCompleted += HandleIntroCompleted;
+            introManager.BeginIntro();
+            return;
+        }
+
         SpawnInitialPlayer();
     }
 
     private void OnDestroy()
     {
+        if (introManager != null)
+        {
+            introManager.IntroCompleted -= HandleIntroCompleted;
+        }
+
         if (Instance == this)
         {
             Instance = null;
@@ -59,7 +74,17 @@ public class GameController : MonoBehaviour
             deathScreenController.HideDeathScreen();
         }
 
-        inventoryManager?.Refresh();
+        InventoryManager.Instance?.Refresh();
+    }
+
+    private void HandleIntroCompleted()
+    {
+        if (introManager != null)
+        {
+            introManager.IntroCompleted -= HandleIntroCompleted;
+        }
+
+        SpawnInitialPlayer();
     }
 
     private void SpawnInitialPlayer()
@@ -74,7 +99,7 @@ public class GameController : MonoBehaviour
             deathScreenController.HideDeathScreen();
         }
 
-        inventoryManager?.Refresh();
+        InventoryManager.Instance?.Refresh();
     }
 
     private void SpawnPlayer()
@@ -85,10 +110,34 @@ public class GameController : MonoBehaviour
             return;
         }
 
+        // 1. Thiết lập vị trí mặc định ban đầu
         Vector3 spawnPosition = spawnPoint != null ? spawnPoint.position : Vector3.zero;
         Quaternion spawnRotation = spawnPoint != null ? spawnPoint.rotation : Quaternion.identity;
 
+        // 2. KIỂM TRA VỊ TRÍ CỬA (Logic mới)
+        // Nếu lastExitName có giá trị, chúng ta đi tìm cái cửa đó trong Scene mới
+        if (!string.IsNullOrEmpty(lastExitName))
+        {
+            GameObject arrivalDoor = GameObject.Find(lastExitName);
+            if (arrivalDoor != null)
+            {
+                spawnPosition = arrivalDoor.transform.position;
+                // (Tùy chọn) spawnRotation = arrivalDoor.transform.rotation; 
+                
+                // Sau khi spawn xong, hãy xóa tên cửa cũ để lần sau load bình thường 
+                // nếu bạn không đi qua cửa (ví dụ hồi sinh/reset game)
+                lastExitName = null; 
+            }
+            else
+            {
+                Debug.LogWarning($"[GameController] Không tìm thấy cửa tên: {lastExitName}. Đang dùng SpawnPoint mặc định.");
+            }
+        }
+
+        // 3. Thực hiện Instantiate tại vị trí đã xác định
         GameObject playerObject = Instantiate(playerPrefab, spawnPosition, spawnRotation);
+
+        // 4. Các logic kiểm tra stats và bind inventory cũ của bạn
         if (playerObject.GetComponent<PlayerStats>() == null)
         {
             Debug.LogWarning($"{nameof(GameController)} spawned a player prefab without {nameof(PlayerStats)}.", playerObject);
@@ -100,11 +149,13 @@ public class GameController : MonoBehaviour
             playerInventory.RefreshBinding();
         }
     }
-
     public InventoryManager GetInventory()
     {
-        ResolveInventoryManager();
-        return inventoryManager;
+        if (InventoryManager.Instance == null)
+        {
+            Debug.LogError($"{nameof(GameController)}: {nameof(InventoryManager)} Instance is missing! Inventory system will not function.", this);
+        }
+        return InventoryManager.Instance;
     }
 
     private bool HasPlayerInScene()
@@ -128,21 +179,27 @@ public class GameController : MonoBehaviour
         return false;
     }
 
-    private void ResolveInventoryManager()
+    private void ResolveIntroManager()
     {
-        if (inventoryManager == null)
+        if (introManager == null)
         {
-            inventoryManager = GetComponent<InventoryManager>();
+            introManager = GetComponent<IntroManager>();
         }
 
-        if (inventoryManager == null)
+        if (introManager == null)
         {
-            inventoryManager = GetComponentInChildren<InventoryManager>(true);
+            introManager = GetComponentInChildren<IntroManager>(true);
         }
 
-        if (inventoryManager == null)
+        if (introManager == null)
         {
-            Debug.LogWarning($"{nameof(GameController)} is missing an {nameof(InventoryManager)} reference.", this);
+            introManager = FindFirstObjectByType<IntroManager>();
         }
+    }
+
+    private bool ShouldDelayInitialSpawnForIntro()
+    {
+        ResolveIntroManager();
+        return introManager != null && introManager.ShouldBlockGameplayStart;
     }
 }
