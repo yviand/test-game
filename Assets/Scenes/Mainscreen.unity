@@ -481,6 +481,10 @@ PrefabInstance:
       propertyPath: m_LocalEulerAnglesHint.z
       value: 0
       objectReference: {fileID: 0}
+    - target: {fileID: 3528010429909870104, guid: 3cab95bfc3d7f2e4086315a905d89fac, type: 3}
+      propertyPath: maxSlots
+      value: 1
+      objectReference: {fileID: 0}
     - target: {fileID: 3635460897523579961, guid: 3cab95bfc3d7f2e4086315a905d89fac, type: 3}
       propertyPath: m_Name
       value: InventoryManager

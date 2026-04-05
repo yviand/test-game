@@ -472,6 +472,7 @@ public class BringerController : MonoBehaviour
     private IEnumerator CleanupRoutine()
     {
         yield return new WaitForSeconds(cleanupDelay);
+        GetComponent<PersistentObject>()?.MarkAsDestroyed();
         Destroy(gameObject);
     }
 

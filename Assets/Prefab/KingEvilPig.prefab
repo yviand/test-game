@@ -286,6 +286,7 @@ GameObject:
   - component: {fileID: 8102292831553519015}
   - component: {fileID: 5004952718013441060}
   - component: {fileID: 3700365708845811976}
+  - component: {fileID: -6833098690197959508}
   m_Layer: 6
   m_Name: KingEvilPig
   m_TagString: Enemy
@@ -559,6 +560,19 @@ MonoBehaviour:
   healthFill: {fileID: 8634893372821223408}
   healthText: {fileID: 2633270412179096038}
   faceMainCamera: 1
+--- !u!114 &-6833098690197959508
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 5780091651431089255}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 08200e90b2cf05348b6458869be9348f, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::PersistentObject
+  uniqueID: 386da509-d1ce-401d-9ae5-3066d521a5b4
 --- !u!1 &5916707167279227825
 GameObject:
   m_ObjectHideFlags: 0

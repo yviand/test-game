@@ -196,6 +196,7 @@ public abstract class BaseDrop : MonoBehaviour
         if (Collect(playerItem))
         {
             isCollected = true;
+            GetComponent<PersistentObject>()?.MarkAsDestroyed();
             Destroy(gameObject);
         }
     }

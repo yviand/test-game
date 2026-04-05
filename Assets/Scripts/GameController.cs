@@ -1,4 +1,5 @@
 using UnityEngine;
+using System.Collections.Generic;
 
 public class GameController : MonoBehaviour
 {
@@ -14,6 +15,7 @@ public class GameController : MonoBehaviour
     private DeathScreenController deathScreenController;
 
     [HideInInspector] public static string lastExitName;
+    public static HashSet<string> persistentDestroyedObjects = new HashSet<string>();
 
     private void Awake()
     {

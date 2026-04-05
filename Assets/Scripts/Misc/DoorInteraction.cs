@@ -78,7 +78,7 @@ public class DoorInteraction : MonoBehaviour
         if (GameController.Instance != null)
         {
             Debug.Log("DOOR: Setting last exit name to: " + targetExitName);
-            GameController.Instance.lastExitName = targetExitName;
+            GameController.lastExitName = targetExitName;
         }
         SceneTransitionManager.Instance.ChangeScene(targetSceneName);
 
